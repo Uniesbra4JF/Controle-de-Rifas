@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestão de Rifas Pro</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        brand: { 50: '#f0f9ff', 500: '#0ea5e9', 600: '#0284c7', 900: '#0c4a6e' }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .toast-enter { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .toast-exit { animation: fadeOut 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+        /* Grade responsiva otimizada para centenas de pontos */
+        .numbers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+            gap: 6px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Header Navbar -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+        <div class="max-w-[95%] mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-brand-600 text-white p-2 rounded-lg"><i class="ph ph-ticket text-xl"></i></div>
+                <h1 class="font-bold text-xl text-gray-900 hidden sm:block">Controle de Rifas</h1>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <!-- Desfazer / Refazer -->
+                <div class="flex bg-gray-50 rounded-lg p-1 border border-gray-200">
+                    <button id="btnUndo" onclick="app.undo()" disabled class="p-1.5 text-gray-400 hover:text-gray-900 disabled:opacity-30" title="Desfazer"><i class="ph ph-arrow-u-up-left text-lg"></i></button>
+                    <button id="btnRedo" onclick="app.redo()" disabled class="p-1.5 text-gray-400 hover:text-gray-900 disabled:opacity-30" title="Refazer"><i class="ph ph-arrow-u-up-right text-lg"></i></button>
+                </div>
+                
+                <button onclick="app.exportXLSX()" class="bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                    <i class="ph ph-file-xls text-lg"></i><span class="hidden sm:inline">Excel</span>
+                </button>
+                <button onclick="app.exportJSON()" class="bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors">
+                    <i class="ph ph-file-code text-lg"></i><span class="hidden md:inline">JSON</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 max-w-[95%] mx-auto w-full py-6 space-y-6">
+        
+        <!-- Stats Row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Pontos Vendidos</p>
+                <div class="flex items-end gap-2 mt-1">
+                    <h2 class="text-2xl font-bold text-brand-600" id="statSold">0</h2>
+                    <span class="text-sm text-gray-400 mb-1 cursor-pointer hover:text-brand-600" onclick="app.changeTotalPoints()">/ <span id="statTotal">100</span></span>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Arrecadado (Pagos)</p>
+                <h2 class="text-2xl font-bold text-emerald-600 mt-1" id="statRevenue">R$ 0,00</h2>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Pendentes</p>
+                <h2 class="text-2xl font-bold text-amber-600 mt-1" id="statPending">0</h2>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <p class="text-xs text-gray-500 font-medium uppercase tracking-wider">Disponíveis</p>
+                <h2 class="text-2xl font-bold text-gray-700 mt-1" id="statAvailable">100</h2>
+            </div>
+        </div>
+
+        <!-- Working Area: Grid + Form -->
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            
+            <!-- Left: Numbers Grid -->
+            <div class="xl:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-[500px]">
+                <div class="px-5 py-4 border-b border-gray-100 flex flex-wrap justify-between items-center gap-2">
+                    <h3 class="font-bold text-gray-800">Selecione os Números</h3>
+                    <div class="flex gap-3 text-xs font-medium">
+                        <span class="flex items-center gap-1"><div class="w-3 h-3 border border-gray-300 bg-white rounded-sm"></div> Livre</span>
+                        <span class="flex items-center gap-1"><div class="w-3 h-3 border border-amber-300 bg-amber-100 rounded-sm"></div> Pendente</span>
+                        <span class="flex items-center gap-1"><div class="w-3 h-3 border border-emerald-300 bg-emerald-100 rounded-sm"></div> Pago</span>
+                        <span class="flex items-center gap-1"><div class="w-3 h-3 border border-blue-300 bg-blue-100 rounded-sm"></div> Pix</span>
+                    </div>
+                </div>
+                
+                <div class="p-5 overflow-y-auto flex-1 bg-gray-50/50">
+                    <div id="gridContainer" class="numbers-grid" onclick="app.handleGridClick(event)">
+                        <!-- Grid renderizada via JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Quick Add Form -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 h-fit sticky top-20">
+                <div class="px-5 py-4 border-b border-gray-100 bg-gray-50/50 rounded-t-xl">
+                    <h3 class="font-bold text-gray-800 flex items-center gap-2">
+                        <i class="ph ph-lightning text-brand-500"></i> Registro Rápido
+                    </h3>
+                </div>
+                
+                <form id="quickAddForm" onsubmit="app.saveQuickAdd(event)" class="p-5 flex flex-col gap-4 relative">
+                    <!-- Overlay quando nada está selecionado -->
+                    <div id="quickAddOverlay" class="absolute inset-0 bg-white/80 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center text-center p-6 transition-opacity">
+                        <div class="bg-gray-100 p-3 rounded-full mb-3 text-gray-400"><i class="ph ph-hand-pointing text-2xl"></i></div>
+                        <p class="text-sm font-medium text-gray-600">Clique nos números livres na grade ao lado para registrar.</p>
+                    </div>
+
+                    <div class="bg-brand-50 text-brand-800 p-3 rounded-lg border border-brand-100">
+                        <p class="text-xs font-semibold uppercase opacity-70 mb-1">Números Selecionados:</p>
+                        <p class="font-bold text-lg" id="qfSelectedNumbers">-</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Nome do Participante <span class="text-red-500">*</span></label>
+                        <input type="text" id="qfName" required class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all" placeholder="Nome completo">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Status do Pagamento <span class="text-red-500">*</span></label>
+                        <select id="qfStatus" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all bg-white">
+                            <option value="Pendente">Pendente</option>
+                            <option value="Pago">Pago (Dinheiro/Outro)</option>
+                            <option value="Pago Pix Mãe">Pago Pix Mãe</option>
+                            <option value="Pago Pix JF">Pago Pix JF</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Observação (Opcional)</label>
+                        <input type="text" id="qfObs" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all" placeholder="Telefone ou recado...">
+                    </div>
+
+                    <button type="submit" class="w-full mt-2 bg-brand-600 text-white py-2.5 rounded-lg font-semibold hover:bg-brand-700 active:bg-brand-800 transition-colors shadow-sm flex items-center justify-center gap-2">
+                        <i class="ph ph-check-circle text-lg"></i> Salvar Registros
+                    </button>
+                    <button type="button" onclick="app.clearSelection()" class="w-full text-gray-500 text-sm hover:text-gray-800 py-1 font-medium">Cancelar seleção</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Practical Data Table -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h3 class="font-bold text-gray-800 flex items-center gap-2 whitespace-nowrap">
+                    <i class="ph ph-list-dashes text-gray-500"></i> Tabela de Participantes
+                </h3>
+                
+                <div class="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+                    <!-- Barra de Pesquisa -->
+                    <div class="relative w-full md:w-64">
+                        <i class="ph ph-magnifying-glass absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-lg"></i>
+                        <input type="text" id="searchInput" oninput="app.handleSearch(event)" placeholder="Buscar por pessoa..." class="w-full pl-9 pr-3 py-1.5 rounded-md border border-gray-300 text-sm focus:ring-2 focus:ring-brand-500 outline-none transition-shadow">
+                    </div>
+
+                    <!-- Filtros para a Tabela -->
+                    <div class="flex overflow-x-auto hide-scrollbar gap-2 w-full md:w-auto" id="filterContainer">
+                        <button onclick="app.setFilter('all')" class="filter-btn active whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold transition-colors bg-gray-800 text-white" data-filter="all">Todos</button>
+                        <button onclick="app.setFilter('pagos')" class="filter-btn whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors" data-filter="pagos">Pagos</button>
+                        <button onclick="app.setFilter('Pago Pix Mãe')" class="filter-btn whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors" data-filter="Pago Pix Mãe">Pix Mãe</button>
+                        <button onclick="app.setFilter('Pago Pix JF')" class="filter-btn whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors" data-filter="Pago Pix JF">Pix JF</button>
+                        <button onclick="app.setFilter('Pendente')" class="filter-btn whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors" data-filter="Pendente">Pendentes</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-50 text-gray-500 text-xs uppercase font-semibold border-b border-gray-200">
+                        <tr>
+                            <th class="px-5 py-3 w-20">No.</th>
+                            <th class="px-5 py-3">Participante</th>
+                            <th class="px-5 py-3 w-40">Status</th>
+                            <th class="px-5 py-3 w-32">Valor</th>
+                            <th class="px-5 py-3">Observação</th>
+                            <th class="px-5 py-3 w-24 text-right">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="text-sm divide-y divide-gray-100">
+                        <!-- Linhas da tabela -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div id="emptyTableState" class="hidden flex-col items-center justify-center py-12 text-center bg-gray-50/30">
+                <i class="ph ph-clipboard-text text-4xl text-gray-300 mb-2"></i>
+                <p class="text-gray-500 text-sm font-medium">Nenhum registro encontrado nesta visão.</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Modal Editar Individual -->
+    <div id="editModal" class="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 hidden opacity-0 transition-opacity flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden transform scale-95 transition-transform" id="editModalContent">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                <h3 class="font-bold text-gray-900">Editar Registro</h3>
+                <button onclick="app.closeEditModal()" class="text-gray-400 hover:text-gray-700 transition-colors"><i class="ph ph-x text-lg"></i></button>
+            </div>
+            <form onsubmit="app.saveEdit(event)" class="p-6 flex flex-col gap-4 bg-gray-50/30">
+                <input type="hidden" id="editId">
+                
+                <div class="flex gap-4">
+                    <div class="w-1/3">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Ponto</label>
+                        <input type="number" id="editPoint" required min="1" class="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-100 text-gray-700 font-bold outline-none" readonly>
+                    </div>
+                    <div class="w-2/3">
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+                        <select id="editStatus" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 outline-none bg-white">
+                            <option value="Pendente">Pendente</option>
+                            <option value="Pago">Pago (Dinheiro/Outro)</option>
+                            <option value="Pago Pix Mãe">Pago Pix Mãe</option>
+                            <option value="Pago Pix JF">Pago Pix JF</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Participante</label>
+                    <input type="text" id="editName" required class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Observação</label>
+                    <input type="text" id="editObs" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 outline-none">
+                </div>
+
+                <div class="mt-2 flex gap-3">
+                    <button type="button" onclick="app.closeEditModal()" class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50">Cancelar</button>
+                    <button type="submit" class="flex-1 px-4 py-2 bg-brand-600 text-white rounded-md font-medium hover:bg-brand-700">Atualizar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toastContainer" class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <script>
+        const app = {
+            state: {
+                records: [],
+                totalPoints: 180,
+                pricePerPoint: 5.00,
+                history: [],
+                future: [],
+                currentFilter: 'all',
+                selectedPoints: [], // Números selecionados na grade
+                searchTerm: '' // Termo de busca
+            },
+
+            init() {
+                this.loadFromLocal();
+                this.renderUI();
+                
+                // Atalho de teclado para fechar modal
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') this.closeEditModal();
+                });
+            },
+
+            // --- LOCAL STORAGE ---
+            loadFromLocal() {
+                const saved = localStorage.getItem('rifa_data_v2');
+                if (saved) {
+                    try {
+                        const parsed = JSON.parse(saved);
+                        this.state.records = parsed.records || [];
+                        this.state.totalPoints = parsed.totalPoints || 180;
+                    } catch (e) { console.error(e); }
+                }
+            },
+            saveToLocal() {
+                localStorage.setItem('rifa_data_v2', JSON.stringify({
+                    records: this.state.records,
+                    totalPoints: this.state.totalPoints
+                }));
+            },
+
+            // --- UNDO / REDO ---
+            saveStateForUndo() {
+                this.state.history.push(JSON.stringify(this.state.records));
+                if (this.state.history.length > 5) this.state.history.shift();
+                this.state.future = [];
+                this.updateUndoRedoUI();
+            },
+            undo() {
+                if (!this.state.history.length) return;
+                this.state.future.push(JSON.stringify(this.state.records));
+                this.state.records = JSON.parse(this.state.history.pop());
+                this.commitChange('Ação desfeita');
+            },
+            redo() {
+                if (!this.state.future.length) return;
+                this.state.history.push(JSON.stringify(this.state.records));
+                this.state.records = JSON.parse(this.state.future.pop());
+                this.commitChange('Ação refeita');
+            },
+            commitChange(msg) {
+                this.saveToLocal();
+                this.renderUI();
+                this.updateUndoRedoUI();
+                if(msg) this.showToast(msg);
+            },
+            updateUndoRedoUI() {
+                document.getElementById('btnUndo').disabled = !this.state.history.length;
+                document.getElementById('btnRedo').disabled = !this.state.future.length;
+            },
+
+            // --- RENDER UI ---
+            renderUI() {
+                this.renderStats();
+                this.renderGrid();
+                this.renderTable();
+                this.updateQuickFormState();
+            },
+
+            renderStats() {
+                const sold = this.state.records.length;
+                const available = Math.max(0, this.state.totalPoints - sold);
+                
+                const paidCount = this.state.records.filter(r => r.status.startsWith('Pago')).length;
+                const pendingCount = this.state.records.filter(r => r.status === 'Pendente').length;
+                const revenue = paidCount * this.state.pricePerPoint;
+
+                document.getElementById('statTotal').innerText = this.state.totalPoints;
+                document.getElementById('statSold').innerText = sold;
+                document.getElementById('statPending').innerText = pendingCount;
+                document.getElementById('statAvailable').innerText = available;
+                document.getElementById('statRevenue').innerText = revenue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            },
+
+            renderGrid() {
+                const map = new Map();
+                this.state.records.forEach(r => map.set(r.point, r));
+
+                let html = '';
+                for (let i = 1; i <= this.state.totalPoints; i++) {
+                    const record = map.get(i);
+                    const isSelected = this.state.selectedPoints.includes(i);
+                    
+                    let baseClass = "aspect-square rounded shadow-sm border flex items-center justify-center font-bold text-sm cursor-pointer transition-transform hover:scale-105 active:scale-95 ";
+
+                    if (record) {
+                        // Vendido
+                        if (record.status.startsWith('Pago Pix Mãe')) baseClass += "bg-blue-100 border-blue-300 text-blue-800";
+                        else if (record.status.startsWith('Pago Pix JF')) baseClass += "bg-purple-100 border-purple-300 text-purple-800";
+                        else if (record.status.startsWith('Pago')) baseClass += "bg-emerald-100 border-emerald-300 text-emerald-800";
+                        else baseClass += "bg-amber-100 border-amber-300 text-amber-800"; // Pendente
+                        
+                        html += `<div data-point="${i}" data-type="sold" class="${baseClass}" title="${record.name}">${i}</div>`;
+                    } else if (isSelected) {
+                        // Selecionado para comprar
+                        baseClass += "bg-brand-600 border-brand-700 text-white shadow-inner scale-95";
+                        html += `<div data-point="${i}" data-type="selected" class="${baseClass}">${i}</div>`;
+                    } else {
+                        // Livre
+                        baseClass += "bg-white border-gray-300 text-gray-600 hover:bg-gray-50 hover:border-brand-300";
+                        html += `<div data-point="${i}" data-type="free" class="${baseClass}">${i}</div>`;
+                    }
+                }
+                document.getElementById('gridContainer').innerHTML = html;
+            },
+
+            renderTable() {
+                let filtered = this.state.records;
+                
+                // Filtro por botões (Status)
+                if (this.state.currentFilter !== 'all') {
+                    if (this.state.currentFilter === 'pagos') filtered = filtered.filter(r => r.status.startsWith('Pago'));
+                    else filtered = filtered.filter(r => r.status === this.state.currentFilter);
+                }
+
+                // Filtro por Pesquisa (Lupa)
+                if (this.state.searchTerm) {
+                    const term = this.state.searchTerm.toLowerCase();
+                    filtered = filtered.filter(r => r.name.toLowerCase().includes(term));
+                }
+
+                filtered.sort((a, b) => a.point - b.point);
+
+                const tbody = document.getElementById('tableBody');
+                const empty = document.getElementById('emptyTableState');
+
+                if (filtered.length === 0) {
+                    tbody.innerHTML = '';
+                    empty.classList.remove('hidden');
+                    empty.classList.add('flex');
+                } else {
+                    empty.classList.add('hidden');
+                    empty.classList.remove('flex');
+                    
+                    let html = '';
+                    filtered.forEach(r => {
+                        const badgeColor = this.getBadgeColor(r.status);
+                        html += `
+                            <tr class="hover:bg-gray-50/50 group">
+                                <td class="px-5 py-3 font-bold text-gray-900">${r.point}</td>
+                                <td class="px-5 py-3 font-medium text-gray-800">${r.name}</td>
+                                <td class="px-5 py-3">
+                                    <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-bold ${badgeColor}">
+                                        ${r.status}
+                                    </span>
+                                </td>
+                                <td class="px-5 py-3 text-gray-600 font-medium">R$ 5,00</td>
+                                <td class="px-5 py-3 text-gray-500 text-sm max-w-[200px] truncate" title="${r.obs || ''}">${r.obs || '-'}</td>
+                                <td class="px-5 py-3 text-right">
+                                    <div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button onclick="app.openEditModal('${r.id}')" class="text-brand-600 hover:bg-brand-50 p-1.5 rounded" title="Editar"><i class="ph ph-pencil-simple text-lg"></i></button>
+                                        <button onclick="app.deleteRecord('${r.id}', ${r.point})" class="text-red-600 hover:bg-red-50 p-1.5 rounded" title="Apagar"><i class="ph ph-trash text-lg"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    tbody.innerHTML = html;
+                }
+            },
+
+            // --- LOGICA DE SELEÇÃO E FORMULÁRIO RÁPIDO ---
+            handleGridClick(e) {
+                const el = e.target;
+                if (!el.dataset.point) return;
+                
+                const point = parseInt(el.dataset.point);
+                const type = el.dataset.type;
+
+                if (type === 'sold') {
+                    // Editar se clicou num vendido
+                    const record = this.state.records.find(r => r.point === point);
+                    if(record) this.openEditModal(record.id);
+                } else if (type === 'free') {
+                    // Adicionar à seleção
+                    this.state.selectedPoints.push(point);
+                    this.state.selectedPoints.sort((a,b) => a - b);
+                    this.renderGrid();
+                    this.updateQuickFormState();
+                } else if (type === 'selected') {
+                    // Remover da seleção
+                    this.state.selectedPoints = this.state.selectedPoints.filter(p => p !== point);
+                    this.renderGrid();
+                    this.updateQuickFormState();
+                }
+            },
+
+            updateQuickFormState() {
+                const overlay = document.getElementById('quickAddOverlay');
+                const selLabel = document.getElementById('qfSelectedNumbers');
+                const nameInput = document.getElementById('qfName');
+
+                if (this.state.selectedPoints.length === 0) {
+                    overlay.classList.remove('opacity-0', 'pointer-events-none');
+                    selLabel.innerText = '-';
+                } else {
+                    overlay.classList.add('opacity-0', 'pointer-events-none');
+                    selLabel.innerText = this.state.selectedPoints.join(', ');
+                    // Autofocus the name field if it's the first selection
+                    if (document.activeElement !== nameInput && document.activeElement !== document.getElementById('qfStatus') && document.activeElement !== document.getElementById('qfObs')) {
+                        nameInput.focus();
+                    }
+                }
+            },
+
+            clearSelection() {
+                this.state.selectedPoints = [];
+                document.getElementById('quickAddForm').reset();
+                this.renderGrid();
+                this.updateQuickFormState();
+            },
+
+            saveQuickAdd(e) {
+                e.preventDefault();
+                if (this.state.selectedPoints.length === 0) return;
+
+                const name = document.getElementById('qfName').value.trim();
+                const status = document.getElementById('qfStatus').value;
+                const obs = document.getElementById('qfObs').value.trim();
+
+                this.saveStateForUndo();
+                const timestamp = Date.now();
+
+                // Cria um registo para cada ponto selecionado
+                this.state.selectedPoints.forEach((point, i) => {
+                    this.state.records.push({
+                        id: `${timestamp}-${i}`,
+                        point, name, status, obs
+                    });
+                });
+
+                const count = this.state.selectedPoints.length;
+                this.showToast(`${count} ponto(s) registrado(s) para ${name}`);
+                
+                this.clearSelection();
+                this.commitChange();
+            },
+
+            // --- EDIÇÃO DE REGISTROS ---
+            openEditModal(id) {
+                const r = this.state.records.find(x => x.id === id);
+                if (!r) return;
+
+                document.getElementById('editId').value = r.id;
+                document.getElementById('editPoint').value = r.point;
+                document.getElementById('editName').value = r.name;
+                document.getElementById('editStatus').value = r.status;
+                document.getElementById('editObs').value = r.obs || '';
+
+                const modal = document.getElementById('editModal');
+                const content = document.getElementById('editModalContent');
+                modal.classList.remove('hidden');
+                setTimeout(() => { modal.classList.remove('opacity-0'); content.classList.remove('scale-95'); }, 10);
+            },
+
+            closeEditModal() {
+                const modal = document.getElementById('editModal');
+                const content = document.getElementById('editModalContent');
+                modal.classList.add('opacity-0'); content.classList.add('scale-95');
+                setTimeout(() => modal.classList.add('hidden'), 200);
+            },
+
+            saveEdit(e) {
+                e.preventDefault();
+                const id = document.getElementById('editId').value;
+                const name = document.getElementById('editName').value.trim();
+                const status = document.getElementById('editStatus').value;
+                const obs = document.getElementById('editObs').value.trim();
+
+                const index = this.state.records.findIndex(r => r.id === id);
+                if (index !== -1) {
+                    this.saveStateForUndo();
+                    this.state.records[index] = { ...this.state.records[index], name, status, obs };
+                    this.closeEditModal();
+                    this.commitChange('Registro atualizado com sucesso');
+                }
+            },
+
+            deleteRecord(id, point) {
+                if(confirm(`Tem a certeza que deseja APAGAR o ponto ${point}? Pode desfazer depois.`)) {
+                    this.saveStateForUndo();
+                    this.state.records = this.state.records.filter(r => r.id !== id);
+                    this.commitChange('Ponto apagado.');
+                }
+            },
+
+            // --- UTILIDADES ---
+            getBadgeColor(status) {
+                if(status === 'Pendente') return 'bg-amber-100 text-amber-800 border border-amber-200';
+                if(status.startsWith('Pago Pix Mãe')) return 'bg-blue-100 text-blue-800 border border-blue-200';
+                if(status.startsWith('Pago Pix JF')) return 'bg-purple-100 text-purple-800 border border-purple-200';
+                if(status.startsWith('Pago')) return 'bg-emerald-100 text-emerald-800 border border-emerald-200';
+                return 'bg-gray-100 text-gray-800 border border-gray-200';
+            },
+
+            setFilter(f) {
+                this.state.currentFilter = f;
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                    if (btn.dataset.filter === f) btn.className = 'filter-btn active whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold transition-colors bg-gray-800 text-white';
+                    else btn.className = 'filter-btn whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-semibold text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors';
+                });
+                this.renderTable();
+            },
+
+            handleSearch(e) {
+                this.state.searchTerm = e.target.value;
+                this.renderTable();
+            },
+
+            changeTotalPoints() {
+                const ans = prompt('Defina o total de números da rifa:', this.state.totalPoints);
+                if (ans) {
+                    const parsed = parseInt(ans);
+                    if (!isNaN(parsed) && parsed >= this.state.records.length) {
+                        this.state.totalPoints = parsed;
+                        this.commitChange('Total ajustado');
+                    } else {
+                        alert('Valor inválido ou menor que os pontos já vendidos.');
+                    }
+                }
+            },
+
+            showToast(msg) {
+                const c = document.getElementById('toastContainer');
+                const t = document.createElement('div');
+                t.className = `toast-enter flex items-center gap-2 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-xl font-medium text-sm`;
+                t.innerHTML = `<i class="ph ph-check-circle text-brand-400 text-lg"></i> ${msg}`;
+                c.appendChild(t);
+                setTimeout(() => { t.classList.replace('toast-enter', 'toast-exit'); setTimeout(() => t.remove(), 300); }, 3000);
+            },
+
+            // --- EXPORTAÇÃO ---
+            exportJSON() {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.state.records, null, 2));
+                const node = document.createElement('a');
+                node.setAttribute("href", dataStr);
+                node.setAttribute("download", `Rifa_${new Date().toISOString().split('T')[0]}.json`);
+                document.body.appendChild(node); node.click(); node.remove();
+            },
+
+            exportXLSX() {
+                if (typeof XLSX === 'undefined') return alert('A carregar biblioteca Excel...');
+                const data = [["Ponto", "Participante", "Status", "Valor (R$)", "Obs"]];
+                const sorted = [...this.state.records].sort((a,b) => a.point - b.point);
+                sorted.forEach(r => data.push([r.point, r.name, r.status, this.state.pricePerPoint, r.obs || '']));
+                
+                const ws = XLSX.utils.aoa_to_sheet(data);
+                ws['!cols'] = [{wch:8}, {wch:30}, {wch:20}, {wch:12}, {wch:40}];
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Rifa");
+                XLSX.writeFile(wb, `Rifa_${new Date().toISOString().split('T')[0]}.xlsx`);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => app.init());
+    </script>
+</body>
+</html>
